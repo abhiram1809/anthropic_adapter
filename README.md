@@ -29,7 +29,7 @@ The Anthropic Adapter is a lightweight FastAPI proxy server that bridges the gap
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-repo/anthropic-adapter.git
+   git clone https://github.com/abhiram1809/anthropic-adapter.git
    cd anthropic-adapter
    ```
 
