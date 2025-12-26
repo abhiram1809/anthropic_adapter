@@ -35,7 +35,7 @@ The Anthropic Adapter is a lightweight FastAPI proxy server that bridges the gap
 
 2. Create a virtual environment:
    ```bash
-   python -m venv venv
+   uv venv venv
    source venv/bin/activate  # Linux/Mac
    # OR
    venv\Scripts\activate     # Windows
@@ -100,6 +100,56 @@ msg = client.messages.create(
 print(msg.content[0].text)
 ```
 
+### Using with Claude Code
+
+The Anthropic Adapter can be used with [Claude Code](https://code.claude.com/docs/en/overview) to access various OpenAI-compatible models through the Anthropic SDK interface.
+
+#### Configuration
+
+To use the adapter with Claude Code, set the following environment variables:
+
+```bash
+# Set these in your shell (e.g., ~/.bashrc, ~/.zshrc)
+export ANTHROPIC_BASE_URL="http://localhost:8000"
+export ANTHROPIC_AUTH_TOKEN="your-openai-api-key-here"
+export ANTHROPIC_API_KEY=""  # Important: Must be explicitly empty
+```
+
+Or use a project-level settings file at `.claude/settings.local.json`:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:8000",
+    "ANTHROPIC_AUTH_TOKEN": "your-openai-api-key-here",
+    "ANTHROPIC_API_KEY": ""
+  }
+}
+```
+
+#### Model Configuration
+
+You can configure Claude Code to use any model on your OpenAI-compatible API by overriding the default model aliases using environment variables:
+
+```bash
+export ANTHROPIC_DEFAULT_SONNET_MODEL="<MODEL_1>"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="<MODEL_2>"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="<MODEL_3>"
+```
+
+Replace `<MODEL_1>`, `<MODEL_2>`, and `<MODEL_3>` with the exact model names from your OpenAI-compatible API.
+
+#### Usage
+
+Once configured, you can use Claude Code to interact with any OpenAI-compatible API through the Anthropic interface:
+
+```bash
+cd /path/to/your/project
+claude
+```
+
+Now any Anthropic SDK calls will be routed through the adapter to your configured OpenAI-compatible API endpoint.
+
 ## 🔧 Architecture
 
 ### Components
@@ -147,17 +197,6 @@ Anthropic Format → [Transform] → OpenAI Format → [Forward] → OpenAI API 
 **Response:**
 - Token count in Anthropic format
 
-## 🧪 Testing
-
-Run the test suite:
-
-```bash
-python test_detailed_compatibility.py
-python test_environment.py
-```
-
-View test results in `TEST_RESULTS.md`
-
 ## 📝 Examples
 
 See the `examples/` directory for sample usage patterns.
@@ -180,10 +219,26 @@ This project is licensed under the MIT License.
 
 For issues or questions, please open an issue on GitHub.
 
-## 📧 Contact
+## ❓ FAQ
 
-- Email: support@example.com
-- GitHub: https://github.com/your-repo/anthropic-adapter
+### What is the Anthropic Adapter?
+The Anthropic Adapter is an open-source API proxy that translates between Anthropic and OpenAI message formats, enabling seamless interoperability between different LLM providers.
+
+### Why would I need this adapter?
+You would need this adapter if you're using Anthropic SDKs but want to connect to OpenAI-compatible APIs, or if you want to switch between providers without changing your code.
+
+### Can I use this with any OpenAI-compatible API?
+Yes, the adapter is designed to work with any OpenAI-compatible API provider, not just the official OpenAI API.
+
+### Does the adapter support streaming responses?
+Yes, the adapter fully supports Server-Sent Events (SSE) streaming for real-time responses.
+
+### How do I configure the adapter?
+You can configure the adapter using environment variables in a `.env` file or by passing parameters directly to the CLI.
+
+### What about v1/responses endpoint support?
+Support for the v1/responses endpoint is coming soon. Stay tuned for updates!
+
 
 ---
 
