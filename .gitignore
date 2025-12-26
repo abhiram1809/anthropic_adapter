@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+.env.local
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+
+# Test files
+test_detailed_compatibility.py
+test_environment.py
+TEST_RESULTS.md
+
+# Output files
+claude-output.txt
+
+# Logs
+*.log
+
+# Build artifacts
+*.egg-info/
+*.egg
+dist/
+bdist/
+build/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# Ignore root run_adapter.py but not examples/run_adapter.py
+/run_adapter.py
