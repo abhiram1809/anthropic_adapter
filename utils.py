@@ -116,9 +116,13 @@ def transform_request_body(anthropic_body: Dict[str, Any]) -> Dict[str, Any]:
         "model": anthropic_body.get("model"),
         "messages": openai_messages,
         "stream": anthropic_body.get("stream", False),
-        "max_tokens": anthropic_body.get("max_tokens", 4096),
-        "temperature": anthropic_body.get("temperature", 0.7),
     }
+
+    # Only include max_tokens and temperature if explicitly provided
+    if "max_tokens" in anthropic_body:
+        openai_body["max_compeletion_tokens"] = anthropic_body["max_tokens"]
+    if "temperature" in anthropic_body:
+        openai_body["temperature"] = anthropic_body["temperature"]
     
     if openai_messages[-1]["role"]=="assistant":
         openai_body["continue_final_message"] = True
@@ -432,9 +436,13 @@ def transform_request_body_v1_responses(anthropic_body: Dict[str, Any]) -> Dict[
         "model": anthropic_body.get("model"),
         "input": input_items,
         "stream": anthropic_body.get("stream", False),
-        "max_output_tokens": anthropic_body.get("max_tokens", 4096),
-        "temperature": anthropic_body.get("temperature", 0.7),
     }
+
+    # Only include max_output_tokens and temperature if explicitly provided
+    if "max_tokens" in anthropic_body:
+        v1_responses_body["max_output_tokens"] = anthropic_body["max_tokens"]
+    if "temperature" in anthropic_body:
+        v1_responses_body["temperature"] = anthropic_body["temperature"]
 
     if instructions:
         v1_responses_body["instructions"] = instructions
@@ -574,7 +582,6 @@ async def stream_v1_responses_to_anthropic(response: httpx.Response):
                 elif event_type == "response.output_item.added":
                     item = chunk.get("item", {})
                     item_type = item.get("type")
-                    item_id = item.get("id")
                     output_index = chunk.get("output_index", current_block_index)
 
                     # If we have an open block, close it first
