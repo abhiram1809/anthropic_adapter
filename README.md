@@ -6,11 +6,13 @@ An open-source API adapter that translates between Anthropic and OpenAI message 
 
 ## 📋 Overview
 
-The Anthropic Adapter is a lightweight FastAPI proxy server that bridges the gap between **Anthropic API** (v1/messages) and **OpenAI API** (v1/chat/completions). It transforms requests and responses between these two formats, allowing you to use any OpenAI-compatible LLM provider with Anthropic SDKs.
+The Anthropic Adapter is a lightweight FastAPI proxy server that bridges the gap between **Anthropic API** (v1/messages) and **OpenAI API** (v1/chat/completions and v1/responses). It transforms requests and responses between these two formats, allowing you to use any OpenAI-compatible LLM provider with Anthropic SDKs.
 
 ## 🎯 Features
 
 - ✅ **Format Translation**: Automatically convert Anthropic → OpenAI and OpenAI → Anthropic message formats
+- ✅ **Dual API Support**: Works with both `v1/chat/completions` and `v1/responses` endpoints
+- ✅ **Auto-Detection**: Automatically detects and uses the appropriate API based on your base URL
 - ✅ **Streaming Support**: Real-time SSE streaming with proper event formatting
 - ✅ **Token Counting**: Built-in token counter compatible with OpenAI's tiktoken
 - ✅ **Multimodal Support**: Handle text, images, and tool calls
@@ -67,12 +69,19 @@ python cli.py --port 9000 --base-url "http://localhost:1234/v1/chat/completions"
 Create a `.env` file in the root directory:
 
 ```bash
+# For v1/chat/completions (default)
 OPENAI_BASE_URL=https://api.openai.com/v1/chat/completions
+
+# For v1/responses (newer API)
+# OPENAI_BASE_URL=https://api.openai.com/v1/responses
+
 OPENAI_API_KEY=your-openai-api-key-here
 HOST=0.0.0.0
 PORT=8000
 TIKTOKEN_ENCODING=cl100k_base
 ```
+
+**Note**: The adapter automatically detects which API format to use based on your `OPENAI_BASE_URL`. Simply change the URL to switch between `v1/chat/completions` and `v1/responses`.
 
 ### Programmatic Usage
 
@@ -237,7 +246,7 @@ Yes, the adapter fully supports Server-Sent Events (SSE) streaming for real-time
 You can configure the adapter using environment variables in a `.env` file or by passing parameters directly to the CLI.
 
 ### What about v1/responses endpoint support?
-Support for the v1/responses endpoint is coming soon. Stay tuned for updates!
+Yes! The adapter now supports both `v1/chat/completions` and `v1/responses` endpoints. Simply set your `OPENAI_BASE_URL` to the desired endpoint and the adapter will automatically detect and use the appropriate transformation logic.
 
 
 ---

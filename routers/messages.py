@@ -1,9 +1,16 @@
 # routers/messages.py
-import httpx
+import httpx, json
 from fastapi import APIRouter, Request, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from constants import config
-from utils import transform_request_body, transform_openai_response, stream_openai_to_anthropic
+from utils import (
+    transform_request_body,
+    transform_openai_response,
+    stream_openai_to_anthropic,
+    transform_request_body_v1_responses,
+    transform_v1_responses_response,
+    stream_v1_responses_to_anthropic
+)
 
 router = APIRouter()
 
@@ -15,9 +22,21 @@ async def create_message(request: Request, x_api_key: str = Header(None)):
         if not target_api_key:
             raise HTTPException(status_code=401, detail="Missing API Key. Provide via x-api-key header or .env")
 
-        # 2. Transform Request
+        # 2. Transform Request based on API type
         anthropic_body = await request.json()
-        openai_body = transform_request_body(anthropic_body)
+        print(json.dumps(anthropic_body, indent=4))
+
+        # Determine which transformation to use based on API type
+        if config.API_TYPE == "v1_responses":
+            print(f"Using v1/responses API transformation")
+            target_body = transform_request_body_v1_responses(anthropic_body)
+            transform_response_fn = transform_v1_responses_response
+            stream_fn = stream_v1_responses_to_anthropic
+        else:
+            print(f"Using v1/chat/completions API transformation")
+            target_body = transform_request_body(anthropic_body)
+            transform_response_fn = transform_openai_response
+            stream_fn = stream_openai_to_anthropic
 
         headers = {
             "Content-Type": "application/json",
@@ -29,17 +48,17 @@ async def create_message(request: Request, x_api_key: str = Header(None)):
         req = client.build_request(
             "POST",
             config.OPENAI_BASE_URL,
-            json=openai_body,
+            json=target_body,
             headers=headers,
             timeout=60.0
         )
 
         # 4. Handle Response
-        if openai_body.get("stream"):
+        if target_body.get("stream"):
             print("Streaming is true")
             response = await client.send(req, stream=True)
             return StreamingResponse(
-                stream_openai_to_anthropic(response),
+                stream_fn(response),
                 media_type="text/event-stream"
             )
         else:
@@ -56,7 +75,7 @@ async def create_message(request: Request, x_api_key: str = Header(None)):
                 }
                 return JSONResponse(status_code=response.status_code, content=anthropic_error)
 
-            anthropic_resp = transform_openai_response(response.json())
+            anthropic_resp = transform_response_fn(response.json())
             print("Response Recieved !!!")
             print(anthropic_resp)
             return JSONResponse(content=anthropic_resp)

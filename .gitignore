@@ -8,6 +8,11 @@ adapter_venv/
 .env
 .env.local
 .env*.local
+.claude/
+
+# Claude MDs
+Claude.MD
+v1-responses.MD
 
 # IDE
 .vscode/

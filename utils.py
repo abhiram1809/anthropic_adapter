@@ -310,3 +310,350 @@ def count_openai_tokens(openai_body: Dict[str, Any]) -> int:
         num_tokens += len(encoding.encode(tools_str))
 
     return num_tokens
+
+
+# --- v1/responses API Support ---
+
+def transform_request_body_v1_responses(anthropic_body: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Translates Anthropic v1/messages JSON to OpenAI v1/responses JSON.
+
+    Key differences from v1/chat/completions:
+    - Uses 'input' instead of 'messages'
+    - Uses 'instructions' instead of system message in messages array
+    - Uses 'max_output_tokens' instead of 'max_tokens'
+    - Output items are separate (messages, function_calls) not nested in choices
+    """
+    # Build the input list for v1/responses
+    input_items = []
+
+    # 1. System Prompt -> instructions parameter
+    instructions = None
+    if "system" in anthropic_body:
+        system_content = anthropic_body["system"]
+        if isinstance(system_content, list):
+            text_parts = [b["text"] for b in system_content if b["type"] == "text"]
+            instructions = "\n".join(text_parts)
+        else:
+            instructions = system_content
+
+    # 2. Message History -> input items
+    for msg in anthropic_body.get("messages", []):
+        role = msg["role"]
+        content = msg["content"]
+
+        if role == "user":
+            if isinstance(content, str):
+                input_items.append({
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": content}]
+                })
+            elif isinstance(content, list):
+                # Check if this is a Tool Result block or Standard Content
+                is_tool_result = any(b.get("type") == "tool_result" for b in content)
+
+                if is_tool_result:
+                    # Separate Tool Results into distinct items
+                    for block in content:
+                        if block["type"] == "tool_result":
+                            # v1/responses uses custom tool calls, not function calls
+                            # We'll create a custom_tool_call_output for tool results
+                            tool_content = ""
+                            if isinstance(block.get("content"), str):
+                                tool_content = block["content"]
+                            elif isinstance(block.get("content"), list):
+                                tool_content = " ".join([c.get("text", "") for c in block["content"] if c.get("type") == "text"])
+
+                            input_items.append({
+                                "type": "custom_tool_call_output",
+                                "call_id": block["tool_use_id"],
+                                "output": tool_content or "Success"
+                            })
+                else:
+                    # Standard User Multimodal Message
+                    content_blocks = []
+                    for block in content:
+                        if block["type"] == "text":
+                            content_blocks.append({"type": "input_text", "text": block["text"]})
+                        elif block["type"] == "image":
+                            content_blocks.append({
+                                "type": "input_image",
+                                "image_url": convert_image_source(block["source"])
+                            })
+                    input_items.append({
+                        "type": "message",
+                        "role": "user",
+                        "content": content_blocks
+                    })
+
+        elif role == "assistant":
+            # Assistant messages become output message items
+            if isinstance(content, str):
+                input_items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": content}]
+                })
+            elif isinstance(content, list):
+                content_blocks = []
+                for block in content:
+                    if block["type"] == "text":
+                        content_blocks.append({"type": "output_text", "text": block["text"]})
+                    elif block["type"] == "tool_use":
+                        # In v1/responses, function calls are top-level items
+                        # We need to add them as function_call items
+                        input_items.append({
+                            "type": "function_call",
+                            "call_id": block["id"],
+                            "name": block["name"],
+                            "arguments": json.dumps(block["input"])
+                        })
+                if content_blocks:
+                    input_items.append({
+                        "type": "message",
+                        "role": "assistant",
+                        "content": content_blocks
+                    })
+
+    # 3. Tools
+    tools = []
+    if "tools" in anthropic_body:
+        for tool in anthropic_body["tools"]:
+            tools.append({
+                "type": "function",
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "parameters": tool["input_schema"]
+            })
+
+    # 4. Construct Final Body
+    v1_responses_body = {
+        "model": anthropic_body.get("model"),
+        "input": input_items,
+        "stream": anthropic_body.get("stream", False),
+        "max_output_tokens": anthropic_body.get("max_tokens", 4096),
+        "temperature": anthropic_body.get("temperature", 0.7),
+    }
+
+    if instructions:
+        v1_responses_body["instructions"] = instructions
+
+    # Optional params
+    if "stop_sequences" in anthropic_body:
+        v1_responses_body["stop"] = anthropic_body["stop_sequences"]
+    if "top_p" in anthropic_body:
+        v1_responses_body["top_p"] = anthropic_body["top_p"]
+    if "presence_penalty" in anthropic_body:
+        v1_responses_body["presence_penalty"] = anthropic_body["presence_penalty"]
+    if "frequency_penalty" in anthropic_body:
+        v1_responses_body["frequency_penalty"] = anthropic_body["frequency_penalty"]
+
+    if tools:
+        v1_responses_body["tools"] = tools
+        if anthropic_body.get("tool_choice"):
+            tc = anthropic_body["tool_choice"]
+            if tc["type"] == "any":
+                v1_responses_body["tool_choice"] = "required"
+            elif tc["type"] == "auto":
+                v1_responses_body["tool_choice"] = "auto"
+            elif tc["type"] == "tool":
+                v1_responses_body["tool_choice"] = {
+                    "type": "function",
+                    "function": {"name": tc["name"]}
+                }
+
+    return v1_responses_body
+
+
+def transform_v1_responses_response(v1_responses_resp: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Converts OpenAI v1/responses response to Anthropic Message format.
+
+    Key differences from v1/chat/completions:
+    - Output is an array of items (messages, function_calls) not nested in choices
+    - Usage has 'input_tokens' not 'prompt_tokens'
+    - No explicit 'finish_reason' - inferred from output items
+    """
+    content_blocks = []
+    stop_reason = "end_turn"
+
+    # Process output items
+    for output_item in v1_responses_resp.get("output", []):
+        item_type = output_item.get("type")
+
+        if item_type == "message":
+            # Extract text content from message
+            for content in output_item.get("content", []):
+                if content.get("type") == "output_text":
+                    content_blocks.append({
+                        "type": "text",
+                        "text": content.get("text", "")
+                    })
+
+        elif item_type == "function_call":
+            # Convert function_call to tool_use
+            content_blocks.append({
+                "type": "tool_use",
+                "id": output_item.get("call_id", output_item.get("id", "")),
+                "name": output_item.get("name", ""),
+                "input": json.loads(output_item.get("arguments", "{}"))
+            })
+            stop_reason = "tool_use"
+
+    # Extract usage
+    usage = v1_responses_resp.get("usage", {})
+    return {
+        "id": f"msg_{uuid.uuid4().hex}",
+        "type": "message",
+        "role": "assistant",
+        "content": content_blocks,
+        "model": v1_responses_resp.get("model", "unknown"),
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0)
+        }
+    }
+
+
+async def stream_v1_responses_to_anthropic(response: httpx.Response):
+    """
+    Transforms OpenAI v1/responses SSE stream to Anthropic v1/messages format.
+
+    v1/responses streaming events:
+    - response.created: Initial response metadata
+    - response.in_progress: Response generation started
+    - response.output_item.added: New output item added (message, function_call)
+    - response.content_part.added: New content part added to an item
+    - response.output_text.delta: Text delta
+    - response.output_text.done: Text part completed
+    - response.content_part.done: Content part completed
+    - response.output_item.done: Output item completed
+    - response.completed: Response fully completed
+
+    Anthropic streaming events:
+    - message_start: Initial message metadata
+    - content_block_start: New content block started
+    - content_block_delta: Content delta
+    - content_block_stop: Content block ended
+    - message_delta: Message delta (stop_reason, usage)
+    - message_stop: Message completed
+    """
+    msg_id = f"msg_{uuid.uuid4().hex}"
+    message_started = False
+    current_block_index = 0
+    current_content_index = 0
+    open_blocks = {}  # Track open blocks by index
+
+    async for line in response.aiter_lines():
+        if not line.strip():
+            continue
+
+        # Parse SSE event
+        if line.startswith("event: "):
+            event_type = line[7:].strip()
+            continue
+
+        if line.startswith("data: "):
+            data = line[6:].strip()
+            if not data or data == "[DONE]":
+                continue
+
+            try:
+                chunk = json.loads(data)
+
+                # response.created - Send message_start
+                if event_type == "response.created":
+                    if not message_started:
+                        yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'content': [], 'model': 'proxy', 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
+                        message_started = True
+
+                # response.output_item.added - New output item (message or function_call)
+                elif event_type == "response.output_item.added":
+                    item = chunk.get("item", {})
+                    item_type = item.get("type")
+                    item_id = item.get("id")
+                    output_index = chunk.get("output_index", current_block_index)
+
+                    # If we have an open block, close it first
+                    if current_block_index > 0 and current_block_index != output_index:
+                        yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': current_block_index - 1})}\n\n"
+
+                    current_block_index = output_index
+
+                    if item_type == "message":
+                        # Start a text content block
+                        yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': current_block_index, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+                        current_content_index = 0
+                    elif item_type == "function_call":
+                        # Start a tool_use content block
+                        yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': current_block_index, 'content_block': {'type': 'tool_use', 'id': item.get('call_id', item.get('id', '')), 'name': item.get('name', ''), 'input': {}}})}\n\n"
+                        current_content_index = 0
+
+                    open_blocks[current_block_index] = item_type
+
+                # response.content_part.added - New content part in the current item
+                elif event_type == "response.content_part.added":
+                    content_index = chunk.get("content_index")
+
+                    # If this is a new content part and we're out of sync, adjust
+                    if content_index > current_content_index:
+                        # Close previous content part
+                        if current_content_index > 0:
+                            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': current_block_index - 1})}\n\n"
+
+                        current_content_index = content_index
+
+                # response.output_text.delta - Text delta
+                elif event_type == "response.output_text.delta":
+                    delta = chunk.get("delta", "")
+                    if delta:
+                        yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': current_block_index, 'delta': {'type': 'text_delta', 'text': delta}})}\n\n"
+
+                # response.function_call_delta - Function call delta (arguments)
+                elif event_type == "response.function_call_delta":
+                    delta = chunk.get("delta", {})
+                    if delta.get("arguments"):
+                        yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': current_block_index, 'delta': {'type': 'input_json_delta', 'partial_json': delta['arguments']}})}\n\n"
+
+                # response.output_text.done / response.content_part.done - Content part completed
+                elif event_type in ("response.output_text.done", "response.content_part.done"):
+                    pass  # No Anthropic equivalent needed
+
+                # response.output_item.done - Output item completed
+                elif event_type == "response.output_item.done":
+                    output_index = chunk.get("output_index", current_block_index)
+                    if output_index == current_block_index:
+                        yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': current_block_index})}\n\n"
+
+                # response.completed - Response fully completed
+                elif event_type == "response.completed":
+                    response_data = chunk.get("response", {})
+                    usage = response_data.get("usage", {})
+                    output = response_data.get("output", [])
+
+                    # Determine stop_reason from output items
+                    stop_reason = "end_turn"
+                    for item in output:
+                        if item.get("type") == "function_call":
+                            stop_reason = "tool_use"
+                            break
+
+                    # Send message_delta with usage
+                    yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': stop_reason, 'stop_sequence': None}, 'usage': {'output_tokens': usage.get('output_tokens', 0)}})}\n\n"
+
+                    # Send message_stop
+                    yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+
+            except json.JSONDecodeError as e:
+                print(f"JSON Decode Error in streaming: {e}")
+                continue
+            except Exception as e:
+                print(f"Streaming Error: {e}")
+                continue
+
+    # Ensure message_stop is sent if not already
+    if message_started:
+        yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
