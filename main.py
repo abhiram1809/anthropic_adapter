@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from constants import config
 from routers import messages, count_tokens
 
+
 def create_app():
     app = FastAPI(title="Anthropic Adapter")
     
@@ -16,8 +17,16 @@ def create_app():
         allow_headers=["*"],
     )
 
+    # Include messages router first to ensure /v1/messages is matched correctly
     app.include_router(messages.router)
     app.include_router(count_tokens.router)
+
+    @app.on_event("startup")
+    async def log_routes():
+        for route in app.routes:
+            if hasattr(route, 'methods'):
+                print(f"  Route: {route.path} [{','.join(route.methods)}]")
+
     return app
 
 def build_openai_api(

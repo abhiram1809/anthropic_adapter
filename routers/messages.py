@@ -1,6 +1,6 @@
 # routers/messages.py
 import httpx, json
-from fastapi import APIRouter, Request, Header, HTTPException
+from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from constants import config
 from utils import (
@@ -15,9 +15,11 @@ from utils import (
 router = APIRouter()
 
 @router.post("/v1/messages")
-async def create_message(request: Request, x_api_key: str = Header(None)):
+async def create_message(request: Request):
     try:
         # 1. Configuration Validation
+        # Extract API key from x-api-key header (Anthropic SDK sends this)
+        x_api_key = request.headers.get("x-api-key")
         target_api_key = x_api_key or config.OPENAI_API_KEY
         if not target_api_key:
             raise HTTPException(status_code=401, detail="Missing API Key. Provide via x-api-key header or .env")
@@ -64,20 +66,25 @@ async def create_message(request: Request, x_api_key: str = Header(None)):
         else:
             response = await client.send(req)
             if response.status_code != 200:
-                # Transform OpenAI error to Anthropic format
-                error_resp = response.json()
+                # Log upstream error for debugging
+                print(f"⚠️  Upstream returned {response.status_code} from {config.OPENAI_BASE_URL}")
+                try:
+                    error_resp = response.json()
+                except Exception:
+                    error_resp = {}
+                print(f"⚠️  Upstream error body: {error_resp}")
+                # Transform to Anthropic error format
                 anthropic_error = {
                     "type": "error",
                     "error": {
                         "type": error_resp.get("error", {}).get("type", "invalid_request_error"),
-                        "message": error_resp.get("error", {}).get("message", "Unknown error")
+                        "message": error_resp.get("error", {}).get("message", f"Upstream returned {response.status_code}")
                     }
                 }
                 return JSONResponse(status_code=response.status_code, content=anthropic_error)
 
             anthropic_resp = transform_response_fn(response.json())
-            print("Response Recieved !!!")
-            print(anthropic_resp)
+            print("Response Received !!!")
             return JSONResponse(content=anthropic_resp)
 
     except Exception as e:

@@ -52,13 +52,25 @@ The Anthropic Adapter is a lightweight FastAPI proxy server that bridges the gap
 
 ### Quick Start
 
-Run the adapter with default configuration:
+There are two ways to run the adapter:
+
+#### Option 1: Using `run_adapter.py`
+
+Copy the example script to the root directory and customize it:
+
+```bash
+cp examples/run_adapter.py .
+```
+
+Then edit `run_adapter.py` with your desired configuration and run:
 
 ```bash
 python run_adapter.py
 ```
 
-Or with custom parameters:
+#### Option 2: Using the CLI
+
+Run the adapter directly via the command line:
 
 ```bash
 python cli.py --port 9000 --base-url "http://localhost:1234/v1/chat/completions"
