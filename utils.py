@@ -120,7 +120,7 @@ def transform_request_body(anthropic_body: Dict[str, Any]) -> Dict[str, Any]:
 
     # Only include max_tokens and temperature if explicitly provided
     if "max_tokens" in anthropic_body:
-        openai_body["max_compeletion_tokens"] = anthropic_body["max_tokens"]
+        openai_body["max_completion_tokens"] = anthropic_body["max_tokens"]
     if "temperature" in anthropic_body:
         openai_body["temperature"] = anthropic_body["temperature"]
     
